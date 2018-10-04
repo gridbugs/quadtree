@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+extern crate rand;
+use rand::Rng;
 use std::num::NonZeroUsize;
 
 type Number = i64;
@@ -23,7 +26,20 @@ fn max_number(a: Number, b: Number) -> Number {
     Number::max(a, b)
 }
 
-pub struct BoundingRect {
+fn rand_number<R: Rng>(rng: &mut R) -> Number {
+    rng.gen()
+}
+
+fn number_zero() -> Number {
+    0
+}
+
+fn number_max() -> Number {
+    ::std::i64::MAX / 2
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BoundingRect {
     centre_x: Number,
     centre_y: Number,
     width: Number,
@@ -31,18 +47,27 @@ pub struct BoundingRect {
 }
 
 impl BoundingRect {
-    pub fn new_with_nw_and_size(
-        x: Number,
-        y: Number,
-        width: Number,
-        height: Number,
-    ) -> Self {
+    fn new_with_nw_and_size(x: Number, y: Number, width: Number, height: Number) -> Self {
+        assert!(width > number_zero());
+        assert!(height > number_zero());
         Self {
             centre_x: x + half(width),
             centre_y: y + half(height),
             width,
             height,
         }
+    }
+    fn pretty(&self) -> String {
+        const DIV: Number = 10000000000000000;
+        let x = self.centre_x - self.width / 2;
+        let y = self.centre_y - self.height / 2;
+        format!(
+            "[ ({}, {}) ; {} x {}]",
+            x / DIV,
+            y / DIV,
+            self.width / DIV,
+            self.height / DIV
+        )
     }
     fn max_dimension(&self) -> Number {
         Number::max(self.width, self.height)
@@ -84,6 +109,7 @@ impl NodeSquare {
     }
 }
 
+#[derive(Debug)]
 struct Node<T> {
     nw: Option<Index>,
     ne: Option<Index>,
@@ -113,13 +139,14 @@ impl<T> Node<T> {
     }
 }
 
-pub struct Quadtree<T> {
+#[derive(Debug)]
+struct Quadtree<T> {
     nodes: Vec<Node<T>>,
     size: Number,
 }
 
 impl<T> Quadtree<T> {
-    pub fn new(size_exp: u32) -> Self {
+    fn new(size_exp: u32) -> Self {
         Self {
             nodes: vec![Node::empty()],
             size: two_power(size_exp),
@@ -141,7 +168,7 @@ impl<T> Quadtree<T> {
         }
     }
 
-    pub fn insert(&mut self, bounding_rect: BoundingRect, value: T) {
+    fn insert(&mut self, bounding_rect: BoundingRect, value: T) {
         let max_dimension = bounding_rect.max_dimension();
         self.grow_to_size(max_number(max_dimension, bounding_rect.max_centre()));
         let mut node_square = NodeSquare::new_nw_at_origin(self.size);
@@ -215,9 +242,9 @@ impl<T> Quadtree<T> {
         index: usize,
         node_square: NodeSquare,
         bounding_rect: &BoundingRect,
-        f: &F,
+        f: &mut F,
     ) where
-        F: Fn(&BoundingRect, &T),
+        F: FnMut(&BoundingRect, &T),
     {
         let node = &nodes[index];
         for &(ref stored_bounding_box, ref value) in node.data.iter() {
@@ -293,28 +320,127 @@ impl<T> Quadtree<T> {
         }
     }
 
-    pub fn for_each_intersecting<F>(&self, bounding_rect: &BoundingRect, f: F)
+    fn for_each_intersecting<F>(&self, bounding_rect: &BoundingRect, mut f: F)
     where
-        F: Fn(&BoundingRect, &T),
+        F: FnMut(&BoundingRect, &T),
     {
         Self::for_each_intersecting_rec(
             &self.nodes,
             0,
             NodeSquare::new_nw_at_origin(self.size),
             bounding_rect,
-            &f,
+            &mut f,
         );
+    }
+
+    fn naive_for_each_intersecting<F>(&self, bounding_rect: &BoundingRect, mut f: F)
+    where
+        F: FnMut(&BoundingRect, &T),
+    {
+        for node in self.nodes.iter() {
+            for &(ref stored_bounding_box, ref value) in node.data.iter() {
+                if bounding_rect.is_intersecting(stored_bounding_box) {
+                    f(stored_bounding_box, value);
+                }
+            }
+        }
+    }
+}
+
+struct Naive<T> {
+    data: Vec<(BoundingRect, T)>,
+}
+
+impl<T> Naive<T> {
+    fn new() -> Self {
+        Self {
+            data: Default::default(),
+        }
+    }
+    fn insert(&mut self, bounding_rect: BoundingRect, value: T) {
+        self.data.push((bounding_rect, value));
+    }
+    fn for_each_intersecting<F>(&self, bounding_rect: &BoundingRect, mut f: F)
+    where
+        F: FnMut(&BoundingRect, &T),
+    {
+        for &(ref stored_bounding_box, ref value) in self.data.iter() {
+            if bounding_rect.is_intersecting(stored_bounding_box) {
+                f(stored_bounding_box, value);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{Rng, SeedableRng, StdRng};
+    use std::collections::HashSet;
 
     #[test]
     fn resizing() {
         let mut qt = Quadtree::new(4);
         qt.insert(BoundingRect::new_with_nw_and_size(200, 4, 1, 2), ());
         assert_eq!(qt.size, 256);
+    }
+
+    fn make_rng() -> impl Rng {
+        StdRng::from_seed([0; 32])
+    }
+
+    fn rand_bounding_box<R: Rng>(rng: &mut R) -> BoundingRect {
+        let width = rand_number(rng).abs() % number_max();
+        let height = rand_number(rng).abs() % number_max();
+        let x = rand_number(rng).abs() % (number_max() - width);
+        let y = rand_number(rng).abs() % (number_max() - height);
+        BoundingRect::new_with_nw_and_size(x, y, width, height)
+    }
+
+    #[test]
+    fn example() {
+        let mut loose_quadtree = Quadtree::new(1);
+        loose_quadtree.insert(BoundingRect::new_with_nw_and_size(157, 100, 216, 192), ());
+        let mut vec = Vec::new();
+        let query = BoundingRect::new_with_nw_and_size(33, 270, 408, 37);
+        loose_quadtree.for_each_intersecting(&query, |_, _| vec.push(()));
+        panic!("{:#?}", loose_quadtree);
+    }
+
+    fn compare_to_naive() {
+        const NUM_VALUES: usize = 35;
+        const NUM_QUERIES: usize = 2;
+        let mut rng = make_rng();
+        let mut naive = Naive::new();
+        let mut loose_quadtree = Quadtree::new(1);
+        for i in 0..NUM_VALUES {
+            let bounding_box = rand_bounding_box(&mut rng);
+            naive.insert(bounding_box.clone(), i);
+            loose_quadtree.insert(bounding_box, i);
+        }
+        let mut naive_values = HashSet::new();
+        let mut loose_quadtree_values = HashSet::new();
+        for i in 0..NUM_QUERIES {
+            naive_values.clear();
+            loose_quadtree_values.clear();
+            let bounding_box = rand_bounding_box(&mut rng);
+            naive.for_each_intersecting(&bounding_box, |bounding_rect, &value| {
+                naive_values.insert((bounding_rect.clone(), value));
+            });
+            loose_quadtree.for_each_intersecting(
+                &bounding_box,
+                |bounding_rect, &value| {
+                    loose_quadtree_values.insert((bounding_rect.clone(), value));
+                },
+            );
+            let diff = naive_values
+                .difference(&loose_quadtree_values)
+                .collect::<Vec<_>>();
+            if !diff.is_empty() {
+                let pretty_diff =
+                    diff.iter().map(|(b, _)| b.pretty()).collect::<Vec<_>>();
+                panic!("{}\n{:#?}\n{:#?}", i, bounding_box.pretty(), pretty_diff);
+            }
+        }
     }
 }
