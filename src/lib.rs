@@ -246,6 +246,7 @@ impl<T> Quadtree<T> {
     ) where
         F: FnMut(&BoundingRect, &T),
     {
+        eprintln!(">>> {:?}", index);
         let node = &nodes[index];
         for &(ref stored_bounding_box, ref value) in node.data.iter() {
             if bounding_rect.is_intersecting(stored_bounding_box) {
@@ -259,7 +260,7 @@ impl<T> Quadtree<T> {
         let west_x = node_square.centre_x - offset;
         let east_x = node_square.centre_x + offset;
         if let Some(index) = node.nw {
-            if bounding_rect.intersects_node_square(west_x, north_y, size) {
+            if bounding_rect.intersects_node_square(west_x, north_y, node_square.size) {
                 Self::for_each_intersecting_rec(
                     nodes,
                     index_to_usize(index),
@@ -274,7 +275,8 @@ impl<T> Quadtree<T> {
             }
         }
         if let Some(index) = node.ne {
-            if bounding_rect.intersects_node_square(east_x, north_y, size) {
+            eprintln!("{:?}", (east_x, north_y, size));
+            if bounding_rect.intersects_node_square(east_x, north_y, node_square.size) {
                 Self::for_each_intersecting_rec(
                     nodes,
                     index_to_usize(index),
@@ -289,7 +291,7 @@ impl<T> Quadtree<T> {
             }
         }
         if let Some(index) = node.sw {
-            if bounding_rect.intersects_node_square(west_x, south_y, size) {
+            if bounding_rect.intersects_node_square(west_x, south_y, node_square.size) {
                 Self::for_each_intersecting_rec(
                     nodes,
                     index_to_usize(index),
@@ -304,7 +306,7 @@ impl<T> Quadtree<T> {
             }
         }
         if let Some(index) = node.se {
-            if bounding_rect.intersects_node_square(east_x, south_y, size) {
+            if bounding_rect.intersects_node_square(east_x, south_y, node_square.size) {
                 Self::for_each_intersecting_rec(
                     nodes,
                     index_to_usize(index),
@@ -398,18 +400,9 @@ mod tests {
     }
 
     #[test]
-    fn example() {
-        let mut loose_quadtree = Quadtree::new(1);
-        loose_quadtree.insert(BoundingRect::new_with_nw_and_size(157, 100, 216, 192), ());
-        let mut vec = Vec::new();
-        let query = BoundingRect::new_with_nw_and_size(33, 270, 408, 37);
-        loose_quadtree.for_each_intersecting(&query, |_, _| vec.push(()));
-        panic!("{:#?}", loose_quadtree);
-    }
-
     fn compare_to_naive() {
-        const NUM_VALUES: usize = 35;
-        const NUM_QUERIES: usize = 2;
+        const NUM_VALUES: usize = 1000;
+        const NUM_QUERIES: usize = 1000;
         let mut rng = make_rng();
         let mut naive = Naive::new();
         let mut loose_quadtree = Quadtree::new(1);
@@ -441,6 +434,7 @@ mod tests {
                     diff.iter().map(|(b, _)| b.pretty()).collect::<Vec<_>>();
                 panic!("{}\n{:#?}\n{:#?}", i, bounding_box.pretty(), pretty_diff);
             }
+            assert_eq!(naive_values, loose_quadtree_values);
         }
     }
 }
